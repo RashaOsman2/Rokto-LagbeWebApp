@@ -1,0 +1,204 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'admin';
+    }
+    
+    function isHospital() {
+      return isAuthenticated() && getUserData().role == 'hospital';
+    }
+    
+    function isHospitalOwner(hospitalId) {
+      return isAuthenticated() && getUserData().hospitalId == hospitalId;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Anyone authenticated can read user profiles (for donor discovery)
+      allow read: if isAuthenticated();
+      
+      // Users can only write their own profile
+      // Admins can create hospital user profiles
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if isOwner(userId) || isAdmin();
+      
+      // Only admins can delete users
+      allow delete: if isAdmin();
+    }
+
+    // Blood requests collection
+    match /requests/{requestId} {
+      // Authenticated users can read requests they're involved in
+      allow read: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.targetDonorId == request.auth.uid ||
+        resource.data.acceptedDonorId == request.auth.uid ||
+        // Allow donors to see emergency requests matching their blood group
+        (resource.data.isEmergency == true && resource.data.status == 'pending')
+      );
+      
+      // Users can create requests
+      allow create: if isAuthenticated() && request.resource.data.requesterId == request.auth.uid;
+      
+      // Requester, target donor, or accepted donor can update
+      allow update: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.targetDonorId == request.auth.uid ||
+        resource.data.acceptedDonorId == request.auth.uid ||
+        // Allow any donor to accept pending emergency requests
+        (resource.data.isEmergency == true && resource.data.status == 'pending')
+      );
+      
+      // Only requester can delete their own requests
+      allow delete: if isAuthenticated() && resource.data.requesterId == request.auth.uid;
+    }
+
+    // Location shares collection (for live location tracking)
+    match /locationShares/{shareId} {
+      // Only requester and donor in the share can read
+      allow read: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.donorId == request.auth.uid
+      );
+      
+      // Requester can create location share request (status: pending)
+      allow create: if isAuthenticated() && 
+        request.resource.data.requesterId == request.auth.uid;
+      
+      // Donor can update status (accept/deny) and location
+      // Requester can also update if they need to cancel
+      allow update: if isAuthenticated() && (
+        resource.data.donorId == request.auth.uid ||
+        resource.data.requesterId == request.auth.uid
+      );
+      
+      // Either party can delete
+      allow delete: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.donorId == request.auth.uid
+      );
+    }
+
+    // Hospitals collection
+    match /hospitals/{hospitalId} {
+      // Anyone authenticated can read hospital info
+      allow read: if isAuthenticated();
+      
+      // Only admins can create hospitals
+      allow create: if isAdmin();
+      
+      // Admins or the linked hospital account can update
+      allow update: if isAdmin() || isHospitalOwner(hospitalId);
+      
+      // Only admins can delete
+      allow delete: if isAdmin();
+      
+      // Blood stock subcollection - hospitals/{hospitalId}/bloodStock/{bloodGroup}
+      match /bloodStock/{bloodGroup} {
+        // Anyone authenticated can read blood stock (for public display)
+        allow read: if isAuthenticated();
+        
+        // Hospital can create/update their own blood stock
+        // Admin can create/update any hospital's blood stock
+        allow create, update: if isAdmin() || isHospitalOwner(hospitalId);
+        
+        // Only admins can delete blood stock entries
+        allow delete: if isAdmin();
+      }
+    }
+
+    // Hospital accounts collection (legacy - being deprecated)
+    match /hospitalAccounts/{email} {
+      // Only admins can read/write hospital accounts
+      allow read, write: if isAdmin();
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      // Users can read their own notifications
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Anyone authenticated can create notifications (for sending to others)
+      allow create: if isAuthenticated();
+      
+      // Users can update their own notifications (mark as read)
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // Users can delete their own notifications
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Chat messages collection
+    match /chats/{chatId} {
+      // Chat participants can read
+      allow read: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.donorId == request.auth.uid
+      );
+      
+      // Participants can create chats
+      allow create: if isAuthenticated();
+      
+      // Participants can update
+      allow update: if isAuthenticated() && (
+        resource.data.requesterId == request.auth.uid ||
+        resource.data.donorId == request.auth.uid
+      );
+      
+      // Messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update, delete: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+      }
+    }
+
+    // Blood stock history (for tracking changes)
+    match /bloodStockHistory/{historyId} {
+      // Authenticated users can read history
+      allow read: if isAuthenticated();
+      
+      // Only admins and hospitals can create history entries
+      allow create: if isAdmin() || isHospital();
+      
+      // No updates or deletes allowed (audit log)
+      allow update, delete: if false;
+    }
+
+    // Donation history
+    match /donationHistory/{historyId} {
+      // Users can read their own donation history
+      allow read: if isAuthenticated() && (
+        resource.data.donorId == request.auth.uid ||
+        resource.data.requesterId == request.auth.uid
+      );
+      
+      // Authenticated users can create donation history
+      allow create: if isAuthenticated();
+      
+      // Only admins can update/delete
+      allow update, delete: if isAdmin();
+    }
+
+    // Deny all other access by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
