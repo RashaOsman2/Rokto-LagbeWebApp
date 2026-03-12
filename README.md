@@ -15,7 +15,7 @@
 
 ## 🌐 Live Demo
 
-**[rokto-lagbewebap.netlify.app](https://rokto-lagbewebap.netlify.app)**
+**[rokto-lagbewebap.netlify.app](https://lagberokto.netlify.app)**
 
 ---
 
@@ -30,7 +30,6 @@ The purpose is simple but powerful: technology that can directly contribute to s
 ## ✨ Features
 
 - 🔴 **Real-time donor-patient matching** — find the right blood type fast
-- 📍 **Live location tracking** — donors can share location with patients
 - 🏥 **Hospital dashboard** — hospitals manage blood stock and requests
 - 👤 **Donor profiles** — manage blood type, donation history, availability
 - 🔔 **Push notifications** — alert nearby donors when blood is urgently needed
